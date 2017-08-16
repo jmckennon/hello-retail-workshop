@@ -8,6 +8,8 @@ const contributionRequestSchema = require('./contributions-request-schema.json')
 const contributionItemsSchema = require('./contribution-items-schema.json')
 const scoresRequestSchema = require('./scores-request-schema.json')
 const scoreItemsSchema = require('./score-items-schema.json')
+const popularityRequestSchema = require('./popularity-request-schema.json')
+const popularityItemsSchema = require('./popularity-items-schema.json')
 
 // TODO generalize this?  it is used by but not specific to this module
 const makeSchemaId = schema => `${schema.self.vendor}/${schema.self.name}/${schema.self.version}`
@@ -16,12 +18,16 @@ const contributionRequestSchemaId = makeSchemaId(contributionRequestSchema)
 const contributionItemsSchemaId = makeSchemaId(contributionItemsSchema)
 const scoresRequestSchemaId = makeSchemaId(scoresRequestSchema)
 const scoreItemsSchemaId = makeSchemaId(scoreItemsSchema)
+const popularityRequestSchemaId = makeSchemaId(popularityRequestSchema)
+const popularityItemsSchemaId = makeSchemaId(popularityItemsSchema)
 
 const ajv = new AJV()
 ajv.addSchema(contributionRequestSchema, contributionRequestSchemaId)
 ajv.addSchema(contributionItemsSchema, contributionItemsSchemaId)
 ajv.addSchema(scoresRequestSchema, scoresRequestSchemaId)
 ajv.addSchema(scoreItemsSchema, scoreItemsSchemaId)
+ajv.addSchema(popularityRequestSchema, popularityRequestSchemaId)
+ajv.addSchema(popularityItemsSchema, popularityItemsSchemaId)
 
 const dynamo = new aws.DynamoDB.DocumentClient()
 
@@ -31,9 +37,11 @@ const constants = {
   // methods
   METHOD_CONTRIBUTIONS: 'contributions',
   METHOD_SCORES: 'scores',
+  METHOD_POPULARITY: 'popularity',
   // resources
   TABLE_CONTRIBUTIONS_NAME: process.env.TABLE_CONTRIBUTIONS_NAME,
   TABLE_SCORES_NAME: process.env.TABLE_SCORES_NAME,
+  TABLE_POPULARITY_NAME: process.env.TABLE_POPULARITY_NAME,
   //
   INVALID_REQUEST: 'Invalid Request',
   INTEGRATION_ERROR: 'Integration Error',
@@ -164,9 +172,43 @@ const api = {
       })
     }
   },
+  popularity: (event, context, callback) => {
+  if (!ajv.validate(popularityRequestSchemaId, event)) { // bad request
+    callback(null, impl.clientError(constants.METHOD_POPULARITY, popularityRequestSchemaId, ajv.errorsText()), event)
+  } else {
+    const params = {
+      TableName: constants.TABLE_POPULARITY_NAME,
+      IndexName: 'ProductsByCount',
+      ProjectionExpression: '#pn, #pc',
+      KeyConditionExpression: '#ty = :ty',
+      ExpressionAttributeNames: {
+        '#ty': 'type',
+        '#pc': 'purchaseCount',
+        '#pn': 'productName'
+      },
+      ExpressionAttributeValues: {
+        ':ty': 'product'  //arbitrary hash value which is the same for each entry so we can effectively scan the index
+      },
+      Limit: 3,
+      ScanIndexForward: false, // scans the table backwards, first returning highest values of count
+      ConsistentRead: false,
+    }
+
+    dynamo.query(params, (err, data) => {
+      if (err) { // error from dynamo
+        callback(null, impl.dynamoError(constants.METHOD_POPULARITY, err))
+      } else if (!ajv.validate(popularityItemsSchemaId, data.Items)) { // bad data in dynamo
+        callback(null, impl.securityRisk(constants.METHOD_POPULARITY, popularityItemsSchemaId, ajv.errorsText()), data.Items) // careful if the data is sensitive
+      } else { // valid
+        callback(null, impl.success(data.Items))
+      }
+    })
+  }
+},
 }
 
 module.exports = {
   contributions: api.contributions,
   scores: api.scores,
+  popularity: api.popularity,
 }

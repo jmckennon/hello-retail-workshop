@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/schema#",
+  "self": {
+    "vendor": "com.nordstrom",
+    "name": "popularity/items",
+    "format": "jsonschema",
+    "version": "1-0-0"
+  },
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "productId":    { "type": "string" },
+      "purchaseCount":    { "type": "integer" },
+      "productName":    { "type": "string" },
+      "type":    { "type": "string" }
+    },
+    "required": [
+      "productName",
+      "purchaseCount"
+    ],
+    "additionalProperties": false
+  },
+  "additionalProperties": false
+}

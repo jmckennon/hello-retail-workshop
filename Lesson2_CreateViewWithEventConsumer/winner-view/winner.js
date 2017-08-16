@@ -18,9 +18,12 @@ const constants = {
   METHOD_REGISTER_CONTRIBUTOR: 'registerContributor',
   METHOD_UPDATE_SCORES_TABLES: 'updateScoresTable',
   METHOD_UPDATE_PURCHASE_EVENT: 'updatePurchaseEvent',
+  METHOD_UPDATE_PURCHASE_COUNT: 'updatePurchaseCount',
+  METHOD_UPDATE_POPULARITY_TABLE: 'updatePopularityTable',
   // resources
   TABLE_CONTRIBUTIONS_NAME: process.env.TABLE_CONTRIBUTIONS_NAME,
   TABLE_SCORES_NAME: process.env.TABLE_SCORES_NAME,
+  TABLE_POPULARITY_NAME: process.env.TABLE_POPULARITY_NAME,
 }
 
 const kh = new KH.KinesisSynchronousHandler(eventSchema, constants.MODULE)
@@ -57,12 +60,12 @@ const impl = {
       if (err) {
         if (err.code && err.code === 'ConditionalCheckFailedException') {
           console.log(`${constants.METHOD_REGISTER_CONTRIBUTOR} - registration event has already been processed for ${role}.  Skipping.`)
-          complete()
+          impl.updatePopularityTable(event, complete)
         } else {
           complete(`${constants.METHOD_REGISTER_CONTRIBUTOR} - errors updating DynamoDb: ${err}`)
         }
       } else {
-        complete()
+        impl.updatePopularityTable(event, complete)
       }
     }
 
@@ -126,6 +129,50 @@ const impl = {
     }
     dynamo.update(dbParamsContributions, updateCallback)
   },
+
+  /**
+   * Update popularity table for an item being registered.
+   * @param event Which the item is being registered in.
+   * @param complete The callback to inform of completion, with optional error parameter.
+   */
+  updatePopularityTable: (event, complete) => {
+    const popularityCallback = (err) => {
+      if (err) {
+        if (err.code && err.code === 'ConditionalCheckFailedException') {
+          console.log(`${constants.METHOD_UPDATE_POPULARITY_TABLE} - event has already been processed or creation event for product ${id} occurred before stream horizon.  Skipping.`)
+          complete()
+        } else {
+          complete(`${constants.METHOD_UPDATE_POPULARITY_TABLE} - errors updating DynamoDb: ${err}`)
+        }
+      } else {
+        complete()
+      }
+    }
+    console.log(event.data.name)
+    const popularityParams = {
+      TableName: constants.TABLE_POPULARITY_NAME,
+      Key: {
+        productId: event.data.id,
+      },
+      UpdateExpression: 'SET #pc = :pc, #ty = :ty, #pn = :pn',
+      ExpressionAttributeNames: {
+        '#pc': 'purchaseCount',
+        '#pn': 'productName',
+        '#ty': 'type',
+      },
+      ExpressionAttributeValues: {
+        ':pc': 0,
+        ':pn': event.data.name,
+        ':ty': 'product',  //arbitrary hash value which is the same for each entry so we can effectively scan the index
+      },
+      ReturnValues: constants.NONE,
+      ReturnConsumedCapacity: constants.NONE,
+      ReturnItemCollectionMetrics: constants.NONE,
+    }
+    dynamo.update(popularityParams, popularityCallback)
+  },
+
+
   /**
    * Log latest purchase of a given product id to the Events table.  Example event:
    * {
@@ -191,7 +238,7 @@ const impl = {
           complete(`${constants.METHOD_UPDATE_PURCHASE_EVENT} - errors updating DynamoDb: ${err}`)
         }
       } else {
-        impl.updateScoresTable(origin, id, complete)
+        impl.updatePurchaseCount(event, complete)
       }
     }
 
@@ -210,6 +257,45 @@ const impl = {
     }
     dynamo.update(dbParamsEvents, callback)
   },
+
+  /**
+   * Increments the number of times a product has been purchased via purchaseCount.
+   * @param event Which contains the purchase event and item being purchased.
+   * @param complete The callback to inform of completion, with optional error parameter.
+   */
+  updatePurchaseCount: (event, complete) => {
+    const purchaseCountCallback = (err) => {
+      if (err) {
+        if (err.code && err.code === 'ConditionalCheckFailedException') {
+          console.log(`${constants.METHOD_UPDATE_PURCHASE_COUNT} - event has already been processed or creation event for product ${id} occurred before stream horizon.  Skipping.`)
+          complete()
+        } else {
+          complete(`${constants.METHOD_UPDATE_PURCHASE_COUNT} - errors updating DynamoDb: ${err}`)
+        }
+      } else {
+        impl.updateScoresTable(event, complete)
+      }
+    }
+
+    const purchaseCountParams = {
+      TableName: constants.TABLE_POPULARITY_NAME,
+      Key: {
+        productId: event.data.id,
+      },
+      UpdateExpression: 'ADD #pc :pc',
+      ExpressionAttributeNames: {
+        '#pc': 'purchaseCount',
+      },
+      ExpressionAttributeValues: {
+        ':pc': 1,
+      },
+      ReturnValues: constants.NONE,
+      ReturnConsumedCapacity: constants.NONE,
+      ReturnItemCollectionMetrics: constants.NONE,
+    }
+    dynamo.update(purchaseCountParams, purchaseCountCallback)
+  },
+
   /**
    * Update scores table on whatever contributor(s) were just affected.  This is also where photographers are updated to UNKNOWN in the cases where the creation event didn't make it onto the stream.
    * @param id Which product id was affected by last purchase event.

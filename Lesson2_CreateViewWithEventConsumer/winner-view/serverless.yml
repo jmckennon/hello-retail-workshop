@@ -24,6 +24,8 @@ functions:
         Ref: Contributions
       TABLE_SCORES_NAME:
         Ref: Scores
+      TABLE_POPULARITY_NAME:
+        Ref: Popularity
     events:
       - stream:
           arn: ${self:custom.stream}
@@ -117,6 +119,38 @@ resources:
             ProvisionedThroughput:
               ReadCapacityUnits: 1
               WriteCapacityUnits: 1
+    Popularity:
+      # Number of unique viewers in the past x time
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+          - AttributeName: purchaseCount
+            AttributeType: N
+          - AttributeName: type
+            AttributeType: S
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${opt:stage}-Popularity
+        GlobalSecondaryIndexes:
+          - IndexName: ProductsByCount
+            KeySchema:
+              - AttributeName: type
+                KeyType: HASH
+              - AttributeName: purchaseCount
+                KeyType: RANGE
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - productName
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
     # Winner Role for the lambda to read from Kinesis, to write to Logs, and to read from and write to Dynamo DB
     WinnerReaderWriter:
       Type: AWS::IAM::Role
@@ -202,3 +236,13 @@ resources:
                       - '/'
                       - - 'arn:aws:dynamodb:${self:custom.private.region}:${self:custom.private.accountId}:table'
                         - Ref: Scores
+                - Effect: Allow
+                  Action:
+                    - 'dynamodb:Query'
+                    - 'dynamodb:UpdateItem'
+                    - 'dynamodb:GetItem'
+                  Resource:
+                    Fn::Join:
+                      - '/'
+                      - - 'arn:aws:dynamodb:${self:custom.private.region}:${self:custom.private.accountId}:table'
+                        - Ref: Popularity

@@ -35,7 +35,17 @@ functions:
           path: scores
           method: get
           cors: true
-
+  popularity:
+    role:
+      Fn::GetAtt: [ WinnerApiPopularityReader, Arn ]
+    handler: winnerApi.popularity
+    environment:
+      TABLE_POPULARITY_NAME: ${opt:stage}-Popularity
+    events:
+      - http:
+          path: popularity
+          method: get
+          cors: true
 resources:
   Resources:
     # Log Group
@@ -48,6 +58,11 @@ resources:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/${self:service}-${opt:stage}-scores
+        RetentionInDays: 3
+    PopularityLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${opt:stage}-popularity
         RetentionInDays: 3
     # Winner Tables Roles
     WinnerApiContributionsReader: # role for Contributions Lambda
@@ -132,3 +147,45 @@ resources:
                         - ${opt:stage}-Scores
                         - index
                         - ScoresByRole
+    WinnerApiPopularityReader: # role for Contributions Lambda
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        RoleName: ${opt:stage}WinnerApiPopularityReader
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: sts:AssumeRole
+              Principal:
+                Service: lambda.amazonaws.com
+        ManagedPolicyArns:
+          - ${self:custom.private.teamPolicy}
+        Policies:
+          - PolicyName: CreateAndWriteToLogStream
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - 'logs:CreateLogStream'
+                    - 'logs:PutLogEvents'
+                  Resource:
+                    Fn::Join:
+                      - ':'
+                      - - Fn::GetAtt: [ PopularityLogGroup, Arn ]
+                        - '*'
+          - PolicyName: ReadFromPopularity
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                -  Effect: Allow
+                   Action:
+                     - 'dynamodb:Query'
+                   Resource:
+                    Fn::Join:
+                      - '/'
+                      - - 'arn:aws:dynamodb:${self:custom.private.region}:${self:custom.private.accountId}:table'
+                        - ${opt:stage}-Popularity
+                        - index
+                        - ProductsByCount
